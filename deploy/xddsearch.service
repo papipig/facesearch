@@ -8,6 +8,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/xddsearch
+Environment=HOME=/opt/xddsearch
 ExecStart=/opt/xddsearch/.venv/bin/uvicorn backend.main:app \
     --host 127.0.0.1 \
     --port 8000 \
