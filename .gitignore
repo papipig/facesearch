@@ -1,0 +1,17 @@
+data/uploads/
+data/cache/
+data/reference_embeddings.npy
+data/reference_embeddings_meta.json
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.env
+# keep the placeholder files
+!data/reference/.gitkeep
+!data/uploads/.gitkeep
+!data/cache/.gitkeep

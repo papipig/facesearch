@@ -1,0 +1,19 @@
+[Unit]
+Description=xddsearch face recognition service
+After=network.target
+
+[Service]
+Type=simple
+# Change to the user that owns the xddsearch directory
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/xddsearch
+ExecStart=/opt/xddsearch/.venv/bin/uvicorn backend.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
