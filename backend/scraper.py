@@ -61,6 +61,34 @@ def _dedup_thumbnails(urls: List[str]) -> List[str]:
 # Hard cap: never download more than this many images from a single page.
 MAX_IMAGES_PER_PAGE = 100
 
+# Known user-agent presets.  Key is sent from the frontend radio button.
+USER_AGENTS: dict = {
+    "android": (
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Mobile Safari/537.36"
+    ),
+    "iphone": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.5 Mobile/15E148 Safari/604.1"
+    ),
+    "win-chrome": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "win-firefox": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) "
+        "Gecko/20100101 Firefox/126.0"
+    ),
+    "mac-safari": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.5 Safari/605.1.15"
+    ),
+}
+
 # Total wall-clock budget for the image-download phase.
 # If the budget is exceeded we return whatever has completed rather than failing.
 DOWNLOAD_TIMEOUT = 120.0  # seconds
@@ -70,22 +98,42 @@ DOWNLOAD_TIMEOUT = 120.0  # seconds
 MAX_RETRY_AFTER = 10.0  # seconds
 
 
-async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
+async def scrape_images(
+    page_url: str,
+    user_agent: str = "android",
+) -> List[Tuple[bytes, str, str]]:
     """
     Fetch the page at page_url and download all images found on it concurrently.
     Returns a list of (image_bytes, filename, source_url).
+    user_agent: key from USER_AGENTS (falls back to 'android' if unknown).
     """
-    _MOBILE_UA = (
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/125.0.0.0 Mobile Safari/537.36"
-    )
-    _HEADERS = {"User-Agent": _MOBILE_UA}
+    ua_string = USER_AGENTS.get(user_agent, USER_AGENTS["android"])
+    _HEADERS = {
+        "User-Agent": ua_string,
+        # Full browser navigation headers — sites like Facebook reject requests
+        # that look like plain HTTP clients (return 400/403).
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+    }
+    log.info("User-agent preset: %s → %s", user_agent, ua_string[:60])
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=_HEADERS) as client:
         log.info("Fetching page: %s", page_url)
         resp = await client.get(page_url)
-        resp.raise_for_status()
+        if resp.status_code >= 500:
+            resp.raise_for_status()  # server-side error — nothing we can do
+        elif resp.status_code >= 400:
+            # Client error (e.g. Facebook 400, paywalled 403) — log and try to
+            # parse whatever HTML was returned; OGP meta tags are often present
+            # even on restricted pages.
+            log.warning("Page returned HTTP %d — attempting to parse HTML anyway",
+                        resp.status_code)
         log.info("Page fetched: status=%s content-type=%s",
                  resp.status_code, resp.headers.get("content-type", "?"))
 
@@ -123,6 +171,22 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
                 parts = part.strip().split()
                 if parts:
                     img_urls[urljoin(page_url, parts[0])] = None
+
+        # Open Graph / Twitter Card images — social platforms (Facebook,
+        # Instagram, Twitter/X, LinkedIn) expose these meta tags even on
+        # pages that require login, making them the only reliable image source.
+        for tag in soup.find_all("meta", property="og:image"):
+            content = tag.get("content")
+            if content:
+                img_urls[urljoin(page_url, content)] = None
+        for tag in soup.find_all("meta", attrs={"name": "twitter:image"}):
+            content = tag.get("content")
+            if content:
+                img_urls[urljoin(page_url, content)] = None
+        for tag in soup.find_all("meta", property="og:image:secure_url"):
+            content = tag.get("content")
+            if content:
+                img_urls[urljoin(page_url, content)] = None
 
         url_list = _dedup_thumbnails(list(img_urls.keys()))[:MAX_IMAGES_PER_PAGE]
         log.info("URLs extracted: %d unique after dedup (from %d raw, capped at %d)",

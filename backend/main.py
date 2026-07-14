@@ -98,12 +98,15 @@ async def search(
 
 
 @app.post("/search/stream")
-async def search_stream(url: str = Form(...)):
+async def search_stream(
+    url: str = Form(...),
+    user_agent: Optional[str] = Form(default=None),
+):
     """SSE endpoint — streams per-image progress while processing a URL."""
 
     async def event_generator():
         try:
-            scraped = await scrape_images(url)
+            scraped = await scrape_images(url, user_agent=user_agent or "android")
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n"
             return

@@ -118,6 +118,45 @@ main {
   color: var(--text-muted);
 }
 
+/* ── UA picker ── */
+.ua-picker {
+  border: none;
+  padding: 0;
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.ua-picker legend {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+  width: 100%;
+}
+.ua-option input { display: none; }
+.ua-option span {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text-muted);
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  user-select: none;
+}
+.ua-option input:checked + span {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.ua-option span:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 /* ── File preview ── */
 .file-preview {
   margin-top: 0.75rem;

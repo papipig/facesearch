@@ -106,11 +106,13 @@ async function runSearch() {
   } else {
     const url = document.getElementById('url-input').value.trim();
     if (!url) { alert('Please enter a URL.'); return; }
-    setLoading(true, 'Scraping page\u2026');
+    const ua = document.querySelector('input[name="ua"]:checked')?.value || 'android';
+    setLoading(true, 'Scraping page…');
     const results = [];
     try {
       const formData = new FormData();
       formData.append('url', url);
+      formData.append('user_agent', ua);
       const resp = await fetch('/search/stream', { method: 'POST', body: formData });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: resp.statusText }));

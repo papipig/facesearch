@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>XDD Search</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -46,6 +48,29 @@
     <div class="url-input-row">
       <input type="url" id="url-input" placeholder="https://example.com/page-with-images">
     </div>
+    <fieldset class="ua-picker">
+      <legend>Impersonate</legend>
+      <label class="ua-option">
+        <input type="radio" name="ua" value="android" checked>
+        <span>Android</span>
+      </label>
+      <label class="ua-option">
+        <input type="radio" name="ua" value="iphone">
+        <span>iPhone</span>
+      </label>
+      <label class="ua-option">
+        <input type="radio" name="ua" value="win-chrome">
+        <span>Windows Chrome</span>
+      </label>
+      <label class="ua-option">
+        <input type="radio" name="ua" value="win-firefox">
+        <span>Windows Firefox</span>
+      </label>
+      <label class="ua-option">
+        <input type="radio" name="ua" value="mac-safari">
+        <span>macOS Safari</span>
+      </label>
+    </fieldset>
     <p class="hint">All images on the page will be scraped and searched.</p>
   </div>
 
