@@ -239,6 +239,11 @@ async def scrape_images(
                 log.warning("FAIL (429 after 3 retries): %s", img_url)
                 return None
 
+        # asyncio.wait() raises ValueError on an empty set — guard here.
+        if not url_list:
+            log.warning("No image URLs found on page (page may require JavaScript rendering)")
+            return []
+
         tasks = [asyncio.create_task(fetch_one(u)) for u in url_list]
         done, pending = await asyncio.wait(tasks, timeout=DOWNLOAD_TIMEOUT)
 
