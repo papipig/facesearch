@@ -163,6 +163,7 @@ function renderResults(results) {
   section.classList.remove('hidden');
 
   if (!results.length) {
+    heading.textContent = 'Results';
     container.innerHTML = '<p style="color:var(--text-muted)">No images found or processed.</p>';
     return;
   }
