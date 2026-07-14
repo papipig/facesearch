@@ -118,6 +118,38 @@ main {
   color: var(--text-muted);
 }
 
+/* ── Facebook input row ── */
+.fb-input-row {
+  display: flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fb-input-row:focus-within {
+  border-color: var(--accent);
+}
+.fb-prefix {
+  padding: 0.65rem 0.75rem;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  user-select: none;
+  border-right: 1px solid var(--border);
+}
+.fb-input-row input {
+  flex: 1;
+  padding: 0.65rem 1rem;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.fb-input-row input:focus {
+  outline: none;
+}
+
 /* ── UA picker ── */
 .ua-picker {
   border: none;

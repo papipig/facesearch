@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 data/uploads/
 data/cache/
 data/reference_embeddings.npy
@@ -236,4 +235,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
->>>>>>> e157ae85b476cfd0d04361089e496e55a59ccb7d
+
+gallery-dl/facebook

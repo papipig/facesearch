@@ -20,6 +20,7 @@
     <button class="tab active" data-tab="single">Single Image</button>
     <button class="tab" data-tab="multiple">Multiple Images</button>
     <button class="tab" data-tab="url">Simple HTML</button>
+    <button class="tab" data-tab="facebook">Facebook</button>
   </div>
 
   <div class="tab-panel active" id="tab-single">
@@ -72,6 +73,14 @@
       </label>
     </fieldset>
     <p class="hint">All images on the page will be scraped and searched.</p>
+  </div>
+
+  <div class="tab-panel" id="tab-facebook">
+    <div class="fb-input-row">
+      <span class="fb-prefix">facebook.com/</span>
+      <input type="text" id="fb-username" placeholder="username or page name" autocomplete="off" spellcheck="false">
+    </div>
+    <p class="hint">Enter the username or page name from the Facebook URL — e.g. <code>StonewallChamberOfCommerce</code> for <code>facebook.com/StonewallChamberOfCommerce</code>. Photos are downloaded with gallery-dl; only matching images are shown.</p>
   </div>
 
   <button id="search-btn" class="search-button">Search</button>

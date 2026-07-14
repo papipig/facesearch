@@ -103,7 +103,7 @@ async function runSearch() {
       setLoading(false);
     }
 
-  } else {
+  } else if (activeTab === 'url') {
     const url = document.getElementById('url-input').value.trim();
     if (!url) { alert('Please enter a URL.'); return; }
     const ua = document.querySelector('input[name="ua"]:checked')?.value || 'android';
@@ -151,7 +151,115 @@ async function runSearch() {
     } finally {
       setLoading(false);
     }
+
+  } else if (activeTab === 'facebook') {
+    const username = document.getElementById('fb-username').value.trim();
+    if (!username) { alert('Please enter a Facebook username.'); return; }
+    setLoading(true, 'Starting download\u2026');
+    const matches = [];
+    let totalDownloaded = 0;
+    try {
+      const fd = new FormData();
+      fd.append('username', username);
+      const resp = await fetch('/search/facebook', { method: 'POST', body: fd });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        alert(`Search failed: ${err.detail}`);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'downloading') {
+            const suffix = event.filename ? ` — ${event.filename}` : '';
+            setLoadingText(`Downloading photos… (${event.count} file${event.count !== 1 ? 's' : ''}${suffix})`);
+          } else if (event.type === 'scraped') {
+            totalDownloaded = event.total;
+            setLoadingText(event.total ? 'Analysing images\u2026' : 'No images downloaded.');
+            setProgress(0, event.total);
+          } else if (event.type === 'progress') {
+            setLoadingText(`Analysing image ${event.current}\u202f/\u202f${event.total}\u2026`);
+            setProgress(event.current, event.total);
+          } else if (event.type === 'result') {
+            matches.push(event.data);
+          } else if (event.type === 'done') {
+            totalDownloaded = event.total;
+          } else if (event.type === 'error') {
+            alert(`Search failed: ${event.detail}`);
+            break outer;
+          }
+        }
+      }
+      renderFacebookResults(username, totalDownloaded, matches);
+    } catch (e) {
+      alert(`Network error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
   }
+}
+
+/* ── Render Facebook results (matches only + stats) ── */
+function renderFacebookResults(username, totalDownloaded, matches) {
+  const section   = document.getElementById('results-section');
+  const container = document.getElementById('results-container');
+  const heading   = document.getElementById('results-heading');
+  container.innerHTML = '';
+  section.classList.remove('hidden');
+
+  heading.textContent = `Facebook — ${matches.length} / ${totalDownloaded} image(s) matched`;
+
+  if (!matches.length) {
+    container.innerHTML = '<p style="color:var(--text-muted)">No matching images found.</p>';
+    return;
+  }
+
+  const profileUrl = `https://www.facebook.com/${encodeURIComponent(username)}`;
+  const gallery = document.createElement('div');
+  gallery.className = 'gallery';
+
+  matches.forEach(result => {
+    const item = document.createElement('div');
+    item.className = 'gallery-item is-match';
+
+    const img = document.createElement('img');
+    img.src     = `/images/${result.sha256}`;
+    img.alt     = result.filename;
+    img.loading = 'lazy';
+
+    const info = document.createElement('div');
+    info.className = 'item-info';
+
+    const badge = document.createElement('span');
+    badge.className   = 'badge match';
+    badge.textContent = 'MATCH';
+
+    const link = document.createElement('a');
+    link.href      = profileUrl;
+    link.target    = '_blank';
+    link.rel       = 'noopener noreferrer';
+    link.className = 'item-filename';
+    link.textContent = `facebook.com/${username}`;
+    link.addEventListener('click', e => e.stopPropagation());
+
+    info.appendChild(badge);
+    info.appendChild(link);
+    item.appendChild(img);
+    item.appendChild(info);
+    item.addEventListener('click', () => openDetail(result));
+    gallery.appendChild(item);
+  });
+
+  container.appendChild(gallery);
 }
 
 /* ── Render results ── */

@@ -59,7 +59,7 @@ def _dedup_thumbnails(urls: List[str]) -> List[str]:
     return kept
 
 # Hard cap: never download more than this many images from a single page.
-MAX_IMAGES_PER_PAGE = 100
+MAX_IMAGES_PER_PAGE = 100000
 
 # Known user-agent presets.  Key is sent from the frontend radio button.
 USER_AGENTS: dict = {
