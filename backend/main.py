@@ -2,8 +2,8 @@ import asyncio
 import json
 import logging
 import mimetypes
-import os
 import re
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
@@ -142,19 +142,15 @@ async def search_facebook(username: str = Form(...)):
         dl_dir = GALLERY_DL_DIR / username
         dl_dir.mkdir(parents=True, exist_ok=True)
 
-        # HOME must be under /home for the gallery-dl snap to be allowed to
-        # create its user-data directory (snap blocks non-/home paths).
-        from .config import BASE_DIR
-        env = {**os.environ, "HOME": str(BASE_DIR.parent.parent)}
         try:
             proc = await asyncio.create_subprocess_exec(
-                "gallery-dl", "-d", str(dl_dir), "--no-mtime", profile_url,
+                sys.executable, "-m", "gallery_dl",
+                "-d", str(dl_dir), "--no-mtime", profile_url,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env,
             )
         except FileNotFoundError:
-            yield f"data: {json.dumps({'type': 'error', 'detail': 'gallery-dl not found on server.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'detail': 'gallery-dl not found in the server Python environment. Run: pip install gallery-dl'})}\n\n"
             return
 
         # Drain stderr concurrently to prevent pipe-buffer deadlock

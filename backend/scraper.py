@@ -7,6 +7,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from .config import MAX_IMAGES_PER_PAGE
+
 log = logging.getLogger(__name__)
 
 _IMAGE_CONTENT_TYPES = frozenset({
@@ -57,9 +59,6 @@ def _dedup_thumbnails(urls: List[str]) -> List[str]:
             best[key] = (px, url)
     kept = no_hint + [v[1] for v in best.values()]
     return kept
-
-# Hard cap: never download more than this many images from a single page.
-MAX_IMAGES_PER_PAGE = 100000
 
 # Known user-agent presets.  Key is sent from the frontend radio button.
 USER_AGENTS: dict = {

@@ -13,3 +13,6 @@ GALLERY_DL_DIR = DATA_DIR / "gallery-dl"
 # Cosine similarity threshold: faces with similarity >= this value are considered a match.
 # ArcFace normed embeddings; typical useful range is 0.28–0.50.
 MATCH_THRESHOLD: float = 0.4
+
+# Hard cap: never download more than this many images from a single page (Simple HTML).
+MAX_IMAGES_PER_PAGE = 100000
