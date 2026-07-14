@@ -78,11 +78,13 @@ async function runSearch() {
   } else if (activeTab === 'multiple') {
     if (!multipleFiles.length) { alert('Please select at least one image.'); return; }
     const total = multipleFiles.length;
-    setLoading(true, `Processing image 1\u202f/\u202f${total}\u2026`);
+    setLoading(true, 'Processing images\u2026');
+    setProgress(0, total);
     const results = [];
     try {
       for (let i = 0; i < total; i++) {
         setLoadingText(`Processing image ${i + 1}\u202f/\u202f${total}\u2026`);
+        setProgress(i, total);
         const fd = new FormData();
         fd.append('images', multipleFiles[i]);
         const resp = await fetch('/search', { method: 'POST', body: fd });
@@ -92,6 +94,7 @@ async function runSearch() {
           return;
         }
         results.push(...(await resp.json()));
+        setProgress(i + 1, total);
       }
       renderResults(results);
     } catch (e) {
@@ -127,11 +130,11 @@ async function runSearch() {
           if (!line.startsWith('data: ')) continue;
           const event = JSON.parse(line.slice(6));
           if (event.type === 'scraped') {
-            setLoadingText(event.total
-              ? `Processing images\u2026 0\u202f/\u202f${event.total}`
-              : 'No images found on page.');
+            setLoadingText(event.total ? 'Processing images\u2026' : 'No images found on page.');
+            setProgress(0, event.total);
           } else if (event.type === 'progress') {
-            setLoadingText(`Processing images\u2026 ${event.current}\u202f/\u202f${event.total}`);
+            setLoadingText(`Processing image ${event.current}\u202f/\u202f${event.total}\u2026`);
+            setProgress(event.current, event.total);
           } else if (event.type === 'result') {
             results.push(event.data);
           } else if (event.type === 'error') {
@@ -352,10 +355,29 @@ function setLoading(on, text) {
   document.getElementById('loading').classList.toggle('hidden', !on);
   document.getElementById('search-btn').disabled = on;
   document.getElementById('loading-text').textContent = on ? (text || 'Searching\u2026') : 'Searching\u2026';
+  // Reset progress bar when hiding
+  if (!on) setProgress(0, 0);
 }
 
 function setLoadingText(text) {
   document.getElementById('loading-text').textContent = text;
+}
+
+function setProgress(current, total) {
+  const wrap  = document.getElementById('progress-bar-wrap');
+  const fill  = document.getElementById('progress-fill');
+  const label = document.getElementById('progress-label');
+  if (!total) {
+    wrap.classList.add('hidden');
+    label.classList.add('hidden');
+    fill.style.width = '0%';
+    return;
+  }
+  wrap.classList.remove('hidden');
+  label.classList.remove('hidden');
+  const pct = Math.round((current / total) * 100);
+  fill.style.width = pct + '%';
+  label.textContent = `${current}\u202f/\u202f${total}`;
 }
 
 function makePreviewItem(file) {

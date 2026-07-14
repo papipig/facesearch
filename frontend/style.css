@@ -318,4 +318,23 @@ main {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.progress-bar-wrap {
+  width: 260px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
+.progress-label {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
 .hidden { display: none !important; }

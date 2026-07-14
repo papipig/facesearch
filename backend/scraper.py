@@ -39,11 +39,26 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
         img_urls: set = set()
 
         for tag in soup.find_all("img"):
-            for attr in ("src", "data-src", "data-lazy-src"):
+            # Prefer lazy-load attributes — src is often a tiny placeholder
+            for attr in ("data-src", "data-lazy-src", "src"):
                 src = tag.get(attr)
                 if src:
                     img_urls.add(urljoin(page_url, src))
                     break
+            # Also collect from srcset on <img> (e.g. Wikipedia infoboxes)
+            srcset = tag.get("srcset", "")
+            for part in srcset.split(","):
+                parts = part.strip().split()
+                if parts:
+                    img_urls.add(urljoin(page_url, parts[0]))
+
+        # Parse <noscript> blocks — Wikipedia hides the real <img> inside them
+        for noscript in soup.find_all("noscript"):
+            inner = BeautifulSoup(noscript.get_text(), "html.parser")
+            for tag in inner.find_all("img"):
+                src = tag.get("src")
+                if src:
+                    img_urls.add(urljoin(page_url, src))
 
         for tag in soup.find_all("source"):
             srcset = tag.get("srcset", "")
