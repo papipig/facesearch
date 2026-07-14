@@ -2,8 +2,8 @@ import asyncio
 import json
 import logging
 import mimetypes
+import os
 import re
-import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
@@ -24,13 +24,13 @@ logging.basicConfig(
 logging.getLogger("backend.scraper").setLevel(logging.DEBUG)
 from insightface.app import FaceAnalysis
 
-from .config import CACHE_DIR, REFERENCE_DIR, UPLOADS_DIR
+from .config import CACHE_DIR, REFERENCE_DIR, UPLOADS_DIR, GALLERY_DL_DIR
 from .reference import load_reference_embeddings
 from . import search as search_module
 from .scraper import scrape_images
 
 # Ensure runtime directories exist at import time
-for _d in (REFERENCE_DIR, UPLOADS_DIR, CACHE_DIR):
+for _d in (REFERENCE_DIR, UPLOADS_DIR, CACHE_DIR, GALLERY_DL_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
@@ -139,60 +139,67 @@ async def search_facebook(username: str = Form(...)):
     async def event_generator():
         yield f"data: {json.dumps({'type': 'downloading', 'count': 0})}\n\n"
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "gallery-dl", "-d", tmpdir, "--no-mtime", profile_url,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            except FileNotFoundError:
-                yield f"data: {json.dumps({'type': 'error', 'detail': 'gallery-dl not found on server.'})}\n\n"
-                return
+        dl_dir = GALLERY_DL_DIR / username
+        dl_dir.mkdir(parents=True, exist_ok=True)
 
-            # Drain stderr concurrently to prevent pipe-buffer deadlock
-            stderr_task = asyncio.create_task(proc.stderr.read())
-
-            # Stream stdout: gallery-dl prints one downloaded file path per line
-            dl_count = 0
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                filepath = line.decode(errors="replace").strip()
-                if filepath:
-                    dl_count += 1
-                    yield f"data: {json.dumps({'type': 'downloading', 'count': dl_count, 'filename': Path(filepath).name})}\n\n"
-
-            await proc.wait()
-            stderr_bytes = await stderr_task
-
-            _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
-            images = sorted(
-                f for f in Path(tmpdir).rglob("*")
-                if f.is_file() and f.suffix.lower() in _IMAGE_EXTS
+        # HOME must be under /home for the gallery-dl snap to be allowed to
+        # create its user-data directory (snap blocks non-/home paths).
+        from .config import BASE_DIR
+        env = {**os.environ, "HOME": str(BASE_DIR.parent.parent)}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "gallery-dl", "-d", str(dl_dir), "--no-mtime", profile_url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
-            total = len(images)
+        except FileNotFoundError:
+            yield f"data: {json.dumps({'type': 'error', 'detail': 'gallery-dl not found on server.'})}\n\n"
+            return
 
-            if total == 0 and proc.returncode != 0:
-                detail = stderr_bytes.decode(errors="replace")[:500] or "gallery-dl returned no images."
-                yield f"data: {json.dumps({'type': 'error', 'detail': detail})}\n\n"
-                return
+        # Drain stderr concurrently to prevent pipe-buffer deadlock
+        stderr_task = asyncio.create_task(proc.stderr.read())
 
-            yield f"data: {json.dumps({'type': 'scraped', 'total': total})}\n\n"
+        # Stream stdout: gallery-dl prints one downloaded file path per line
+        dl_count = 0
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            filepath = line.decode(errors="replace").strip()
+            if filepath:
+                dl_count += 1
+                yield f"data: {json.dumps({'type': 'downloading', 'count': dl_count, 'filename': Path(filepath).name})}\n\n"
 
-            matched = 0
-            for i, img_path in enumerate(images, 1):
-                yield f"data: {json.dumps({'type': 'progress', 'current': i, 'total': total})}\n\n"
-                image_bytes = img_path.read_bytes()
-                result = await asyncio.to_thread(
-                    search_module.process_image, image_bytes, img_path.name, profile_url
-                )
-                if result["match"]:
-                    matched += 1
-                    yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
+        await proc.wait()
+        stderr_bytes = await stderr_task
 
-            yield f"data: {json.dumps({'type': 'done', 'total': total, 'matched': matched})}\n\n"
+        _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+        images = sorted(
+            f for f in dl_dir.rglob("*")
+            if f.is_file() and f.suffix.lower() in _IMAGE_EXTS
+        )
+        total = len(images)
+
+        if total == 0 and proc.returncode != 0:
+            detail = stderr_bytes.decode(errors="replace")[:500] or "gallery-dl returned no images."
+            yield f"data: {json.dumps({'type': 'error', 'detail': detail})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'scraped', 'total': total})}\n\n"
+
+        matched = 0
+        for i, img_path in enumerate(images, 1):
+            yield f"data: {json.dumps({'type': 'progress', 'current': i, 'total': total})}\n\n"
+            image_bytes = img_path.read_bytes()
+            result = await asyncio.to_thread(
+                search_module.process_image, image_bytes, img_path.name, profile_url
+            )
+            if result["match"]:
+                matched += 1
+                yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done', 'total': total, 'matched': matched})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
