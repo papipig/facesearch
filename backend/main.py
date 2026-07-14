@@ -100,6 +100,9 @@ async def search_stream(url: str = Form(...)):
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/images/{sha256}")
 def serve_image(sha256: str):
     # Validate: must be lowercase hex only — prevents path traversal
     if not sha256 or not all(c in "0123456789abcdef" for c in sha256.lower()) or len(sha256) != 64:
