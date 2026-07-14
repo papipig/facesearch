@@ -1,9 +1,13 @@
 import asyncio
-from typing import List, Optional, Tuple
+import logging
+import re
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+
+log = logging.getLogger(__name__)
 
 _IMAGE_CONTENT_TYPES = frozenset({
     "image/jpeg",
@@ -12,11 +16,58 @@ _IMAGE_CONTENT_TYPES = frozenset({
     "image/bmp",
 })
 
-# Extensions to skip before even making a network request
-_EXCLUDED_EXTENSIONS = frozenset({".gif", ".ico"})
+# Extensions to skip before making any network request.
+# SVG/PDF are vector formats — they cannot contain a photo of a face.
+_EXCLUDED_EXTENSIONS = frozenset({".gif", ".ico", ".svg", ".pdf"})
+
+# Minimum pixel width encoded in CDN thumbnail URLs (e.g. "250px-photo.jpg").
+# Faces need at least ~100 px across in the source image to be detectable.
+_MIN_FACE_PX = 100
+
+# Minimum downloaded file size. Anything smaller is a tracking pixel or tiny icon.
+_MIN_FILE_BYTES = 2048  # 2 KB
+
+# Matches the size prefix in CDN thumbnail paths: ".../330px-filename.jpg"
+_PX_HINT_RE = re.compile(r'/(\d+)px-[^/]+$')
+
+
+def _url_px_hint(path: str) -> Optional[int]:
+    """Return the pixel width encoded in a CDN thumbnail path, or None."""
+    m = _PX_HINT_RE.search(path)
+    return int(m.group(1)) if m else None
+
+
+def _dedup_thumbnails(urls: List[str]) -> List[str]:
+    """
+    For CDN URLs that encode a pixel size (e.g. Wikimedia's /NNpx-filename
+    pattern), keep only the largest variant of each unique source image.
+    URLs with no size hint are kept as-is.
+    """
+    best: Dict[str, Tuple[int, str]] = {}  # canonical_key -> (px, url)
+    no_hint: List[str] = []
+    for url in urls:
+        path = urlparse(url).path
+        px = _url_px_hint(path)
+        if px is None:
+            no_hint.append(url)
+            continue
+        # Canonical key: strip the NNpx- segment so all sizes of one image share a key
+        key = _PX_HINT_RE.sub('', path)
+        if key not in best or px > best[key][0]:
+            best[key] = (px, url)
+    kept = no_hint + [v[1] for v in best.values()]
+    return kept
 
 # Hard cap: never download more than this many images from a single page.
 MAX_IMAGES_PER_PAGE = 100
+
+# Total wall-clock budget for the image-download phase.
+# If the budget is exceeded we return whatever has completed rather than failing.
+DOWNLOAD_TIMEOUT = 120.0  # seconds
+
+# Maximum time to honour a Retry-After header.
+# Prevents a misconfigured/hostile server from sleeping every slot indefinitely.
+MAX_RETRY_AFTER = 10.0  # seconds
 
 
 async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
@@ -32,8 +83,11 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
     _HEADERS = {"User-Agent": _MOBILE_UA}
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=_HEADERS) as client:
+        log.info("Fetching page: %s", page_url)
         resp = await client.get(page_url)
         resp.raise_for_status()
+        log.info("Page fetched: status=%s content-type=%s",
+                 resp.status_code, resp.headers.get("content-type", "?"))
 
         soup = BeautifulSoup(resp.text, "html.parser")
         # Use dict as an ordered set — preserves document order and is stable
@@ -70,22 +124,70 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
                 if parts:
                     img_urls[urljoin(page_url, parts[0])] = None
 
-        url_list = list(img_urls.keys())[:MAX_IMAGES_PER_PAGE]
+        url_list = _dedup_thumbnails(list(img_urls.keys()))[:MAX_IMAGES_PER_PAGE]
+        log.info("URLs extracted: %d unique after dedup (from %d raw, capped at %d)",
+                 len(url_list), len(img_urls), MAX_IMAGES_PER_PAGE)
+
+        # Limit concurrent downloads — firing 40+ requests at once triggers
+        # Wikimedia's (and most CDNs') rate limiter with HTTP 429.
+        sem = asyncio.Semaphore(5)
 
         async def fetch_one(img_url: str) -> Optional[Tuple[bytes, str, str]]:
-            path_lower = urlparse(img_url).path.lower().split("?")[0]
+            parsed_url = urlparse(img_url)
+            path_lower = parsed_url.path.lower().split("?")[0]
+
+            # --- Pre-request filters (no network cost) ---
             if any(path_lower.endswith(ext) for ext in _EXCLUDED_EXTENSIONS):
-                return None
-            try:
-                r = await client.get(img_url, timeout=10.0)
-                ct = r.headers.get("content-type", "").split(";")[0].strip()
-                if ct not in _IMAGE_CONTENT_TYPES:
-                    return None
-                filename = urlparse(img_url).path.rstrip("/").split("/")[-1] or "image"
-                return (r.content, filename, img_url)
-            except Exception:
+                log.debug("SKIP (excluded ext): %s", img_url)
                 return None
 
-        results = await asyncio.gather(*[fetch_one(u) for u in url_list])
+            px = _url_px_hint(parsed_url.path)
+            if px is not None and px < _MIN_FACE_PX:
+                log.debug("SKIP (thumbnail too small: %dpx < %dpx): %s", px, _MIN_FACE_PX, img_url)
+                return None
 
-    return [r for r in results if r is not None]
+            # --- Throttled download with 429 retry ---
+            async with sem:
+                for attempt in range(3):
+                    try:
+                        r = await client.get(img_url, timeout=10.0)
+                        if r.status_code == 429:
+                            raw_wait = r.headers.get("Retry-After", 2 ** attempt)
+                            wait = min(float(raw_wait), MAX_RETRY_AFTER)
+                            log.debug("429 rate-limited (retry %d/3, wait %.1fs): %s",
+                                      attempt + 1, wait, img_url)
+                            await asyncio.sleep(wait)
+                            continue
+                        ct = r.headers.get("content-type", "").split(";")[0].strip()
+                        if ct not in _IMAGE_CONTENT_TYPES:
+                            log.debug("SKIP (content-type=%s status=%s): %s", ct, r.status_code, img_url)
+                            return None
+                        if len(r.content) < _MIN_FILE_BYTES:
+                            log.debug("SKIP (file too small: %d bytes): %s", len(r.content), img_url)
+                            return None
+                        filename = parsed_url.path.rstrip("/").split("/")[-1] or "image"
+                        log.debug("OK   (content-type=%s size=%d px=%s): %s",
+                                  ct, len(r.content), px, img_url)
+                        return (r.content, filename, img_url)
+                    except Exception as exc:
+                        log.warning("FAIL (%s): %s", exc, img_url)
+                        return None
+                log.warning("FAIL (429 after 3 retries): %s", img_url)
+                return None
+
+        tasks = [asyncio.create_task(fetch_one(u)) for u in url_list]
+        done, pending = await asyncio.wait(tasks, timeout=DOWNLOAD_TIMEOUT)
+
+        if pending:
+            log.warning("%d image(s) still in-flight after %.0fs budget — cancelling",
+                        len(pending), DOWNLOAD_TIMEOUT)
+            for t in pending:
+                t.cancel()
+            # Await cancellations so they don't leak
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        good = [t.result() for t in done if not t.exception() and t.result() is not None]
+        log.info("Images fetched: %d / %d succeeded (%d timed out)",
+                 len(good), len(url_list), len(pending))
+
+    return good

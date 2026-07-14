@@ -113,10 +113,74 @@ Input images
 
 ## URL Scraping
 
-1. Fetch the HTML of the provided URL (single page, no link following).
-2. Extract all `<img src="...">` and `<source srcset="...">` URLs.
-3. Download each image (skip on error / non-image content-type).
-4. Feed the downloaded images into the standard search pipeline.
+### Page fetch
+
+The page is fetched once with a **mobile Chrome user-agent** (Android / Pixel 8).
+This causes sites like Wikipedia to serve their mobile layout, which renders all
+infobox images inline rather than deferring them to JavaScript bundles.
+
+### Image URL extraction (in document order)
+
+Sources are tried in this priority order, preserving document order via an
+**ordered dict** (deduplication without losing insertion order — unlike `set`,
+whose iteration order is randomised per process by `PYTHONHASHSEED`):
+
+1. `<img data-src>`, `<img data-lazy-src>`, `<img src>` — lazy-load attributes
+   are preferred over `src` because `src` is often a 1×1 placeholder.
+2. `<img srcset>` — picks up high-DPI or responsive variants.
+3. `<noscript>` inner HTML — Wikipedia and many CMSes hide the canonical `<img>`
+   inside a `<noscript>` block for no-JS fallback.
+4. `<source srcset>` — `<picture>` element sources.
+
+### Pre-download filters (no network cost)
+
+Applied before any HTTP request is made:
+
+| Filter | Rule | Rationale |
+|---|---|---|
+| Extension block | `.gif .ico .svg .pdf` | Vector / animation formats can never contain a face |
+| CDN size hint | Skip if URL contains `NNpx-…` with NN < 100 | Thumbnails narrower than 100 px are too small for face detection |
+| Thumbnail dedup | Keep only the **largest** `NNpx-` variant of each source image | Wikimedia serves the same image at 20 px, 40 px, 60 px, 250 px, 330 px — only the largest is useful |
+
+### Download
+
+At most **5 concurrent connections** (`asyncio.Semaphore(5)`) to avoid
+triggering CDN rate limits (HTTP 429).
+
+#### 429 retry strategy
+
+On a 429 response the scraper retries up to **3 times** per image:
+
+- Sleep duration = `min(Retry-After header, 10 s)` — the cap prevents a
+  misconfigured or hostile server from sleeping every semaphore slot for minutes.
+- If no `Retry-After` header is present, exponential back-off is used: 1 s / 2 s / 4 s.
+- Retries happen **inside** the semaphore slot so the slot stays occupied during
+  the wait, keeping the effective concurrency at ≤ 5 throughout.
+
+#### Total download timeout
+
+All image downloads run under a **120 s wall-clock budget** (`asyncio.wait`
+with `timeout=120`). If the budget is exceeded:
+
+- Tasks that already finished return their results normally.
+- In-flight tasks are cancelled and awaited to prevent coroutine leaks.
+- The scrape returns a **partial result** (whatever succeeded) rather than
+  failing the whole request.
+
+This bounds worst-case latency: even if every image retries three times, the
+user gets a response within ≈ 2 minutes.
+
+### Post-download filters
+
+| Filter | Rule | Rationale |
+|---|---|---|
+| Content-type | Must be `image/jpeg`, `image/png`, `image/webp`, or `image/bmp` | Rejects HTML error pages, SVG served as image/svg+xml, etc. |
+| File size | Skip if body < 2 KB | 1×1 tracking pixels and icon sprites that passed earlier filters |
+
+### Hard cap
+
+At most **100 images per page** are downloaded (applied after dedup and
+pre-download filtering).
 
 ---
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,6 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+
+# Mirror uvicorn's log format for our own loggers
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:     %(name)s - %(message)s",
+)
+# Per-image detail: change to logging.DEBUG to see every SKIP/OK/FAIL line
+logging.getLogger("backend.scraper").setLevel(logging.DEBUG)
 from insightface.app import FaceAnalysis
 
 from .config import CACHE_DIR, REFERENCE_DIR, UPLOADS_DIR
