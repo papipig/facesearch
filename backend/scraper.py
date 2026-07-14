@@ -9,9 +9,11 @@ _IMAGE_CONTENT_TYPES = frozenset({
     "image/jpeg",
     "image/png",
     "image/webp",
-    "image/gif",
     "image/bmp",
 })
+
+# Extensions to skip before even making a network request
+_EXCLUDED_EXTENSIONS = frozenset({".gif", ".ico"})
 
 # Hard cap: never download more than this many images from a single page.
 MAX_IMAGES_PER_PAGE = 100
@@ -22,7 +24,14 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
     Fetch the page at page_url and download all images found on it concurrently.
     Returns a list of (image_bytes, filename, source_url).
     """
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+    _MOBILE_UA = (
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Mobile Safari/537.36"
+    )
+    _HEADERS = {"User-Agent": _MOBILE_UA}
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=_HEADERS) as client:
         resp = await client.get(page_url)
         resp.raise_for_status()
 
@@ -46,6 +55,9 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
         url_list = list(img_urls)[:MAX_IMAGES_PER_PAGE]
 
         async def fetch_one(img_url: str) -> Optional[Tuple[bytes, str, str]]:
+            path_lower = urlparse(img_url).path.lower().split("?")[0]
+            if any(path_lower.endswith(ext) for ext in _EXCLUDED_EXTENSIONS):
+                return None
             try:
                 r = await client.get(img_url, timeout=10.0)
                 ct = r.headers.get("content-type", "").split(";")[0].strip()

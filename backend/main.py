@@ -1,4 +1,5 @@
 import asyncio
+import json
 import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import List, Optional
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from insightface.app import FaceAnalysis
 
@@ -75,7 +76,30 @@ async def search(
     return JSONResponse(results)
 
 
-@app.get("/images/{sha256}")
+@app.post("/search/stream")
+async def search_stream(url: str = Form(...)):
+    """SSE endpoint — streams per-image progress while processing a URL."""
+
+    async def event_generator():
+        try:
+            scraped = await scrape_images(url)
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n"
+            return
+
+        total = len(scraped)
+        yield f"data: {json.dumps({'type': 'scraped', 'total': total})}\n\n"
+
+        for i, (image_bytes, filename, source_url) in enumerate(scraped, 1):
+            yield f"data: {json.dumps({'type': 'progress', 'current': i, 'total': total})}\n\n"
+            result = await asyncio.to_thread(
+                search_module.process_image, image_bytes, filename, source_url
+            )
+            yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 def serve_image(sha256: str):
     # Validate: must be lowercase hex only — prevents path traversal
     if not sha256 or not all(c in "0123456789abcdef" for c in sha256.lower()) or len(sha256) != 64:

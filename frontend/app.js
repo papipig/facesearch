@@ -54,36 +54,98 @@ document.getElementById('multiple-input').addEventListener('change', e => {
 document.getElementById('search-btn').addEventListener('click', runSearch);
 
 async function runSearch() {
-  const formData = new FormData();
+  document.getElementById('results-section').classList.add('hidden');
 
   if (activeTab === 'single') {
     if (!singleFile) { alert('Please select an image.'); return; }
-    formData.append('images', singleFile);
+    setLoading(true, 'Searching\u2026');
+    try {
+      const formData = new FormData();
+      formData.append('images', singleFile);
+      const resp = await fetch('/search', { method: 'POST', body: formData });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        alert(`Search failed: ${err.detail}`);
+        return;
+      }
+      renderResults(await resp.json());
+    } catch (e) {
+      alert(`Network error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+
   } else if (activeTab === 'multiple') {
     if (!multipleFiles.length) { alert('Please select at least one image.'); return; }
-    multipleFiles.forEach(f => formData.append('images', f));
+    const total = multipleFiles.length;
+    setLoading(true, `Processing image 1\u202f/\u202f${total}\u2026`);
+    const results = [];
+    try {
+      for (let i = 0; i < total; i++) {
+        setLoadingText(`Processing image ${i + 1}\u202f/\u202f${total}\u2026`);
+        const fd = new FormData();
+        fd.append('images', multipleFiles[i]);
+        const resp = await fetch('/search', { method: 'POST', body: fd });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          alert(`Search failed on image ${i + 1}: ${err.detail}`);
+          return;
+        }
+        results.push(...(await resp.json()));
+      }
+      renderResults(results);
+    } catch (e) {
+      alert(`Network error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+
   } else {
     const url = document.getElementById('url-input').value.trim();
     if (!url) { alert('Please enter a URL.'); return; }
-    formData.append('url', url);
-  }
-
-  setLoading(true);
-  document.getElementById('results-section').classList.add('hidden');
-
-  try {
-    const resp = await fetch('/search', { method: 'POST', body: formData });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-      alert(`Search failed: ${err.detail}`);
-      return;
+    setLoading(true, 'Scraping page\u2026');
+    const results = [];
+    try {
+      const formData = new FormData();
+      formData.append('url', url);
+      const resp = await fetch('/search/stream', { method: 'POST', body: formData });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        alert(`Search failed: ${err.detail}`);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'scraped') {
+            setLoadingText(event.total
+              ? `Processing images\u2026 0\u202f/\u202f${event.total}`
+              : 'No images found on page.');
+          } else if (event.type === 'progress') {
+            setLoadingText(`Processing images\u2026 ${event.current}\u202f/\u202f${event.total}`);
+          } else if (event.type === 'result') {
+            results.push(event.data);
+          } else if (event.type === 'error') {
+            alert(`Search failed: ${event.detail}`);
+            break outer;
+          }
+        }
+      }
+      renderResults(results);
+    } catch (e) {
+      alert(`Network error: ${e.message}`);
+    } finally {
+      setLoading(false);
     }
-    const results = await resp.json();
-    renderResults(results);
-  } catch (e) {
-    alert(`Network error: ${e.message}`);
-  } finally {
-    setLoading(false);
   }
 }
 
@@ -286,9 +348,14 @@ function drawBoundingBoxes(img, canvas, faces) {
 }
 
 /* ── Utilities ── */
-function setLoading(on) {
+function setLoading(on, text) {
   document.getElementById('loading').classList.toggle('hidden', !on);
   document.getElementById('search-btn').disabled = on;
+  document.getElementById('loading-text').textContent = on ? (text || 'Searching\u2026') : 'Searching\u2026';
+}
+
+function setLoadingText(text) {
+  document.getElementById('loading-text').textContent = text;
 }
 
 function makePreviewItem(file) {
