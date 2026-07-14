@@ -36,21 +36,24 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
         resp.raise_for_status()
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        img_urls: set = set()
+        # Use dict as an ordered set — preserves document order and is stable
+        # across Python processes (unlike set, whose iteration order depends on
+        # PYTHONHASHSEED and changes every run).
+        img_urls: dict = {}
 
         for tag in soup.find_all("img"):
             # Prefer lazy-load attributes — src is often a tiny placeholder
             for attr in ("data-src", "data-lazy-src", "src"):
                 src = tag.get(attr)
                 if src:
-                    img_urls.add(urljoin(page_url, src))
+                    img_urls[urljoin(page_url, src)] = None
                     break
             # Also collect from srcset on <img> (e.g. Wikipedia infoboxes)
             srcset = tag.get("srcset", "")
             for part in srcset.split(","):
                 parts = part.strip().split()
                 if parts:
-                    img_urls.add(urljoin(page_url, parts[0]))
+                    img_urls[urljoin(page_url, parts[0])] = None
 
         # Parse <noscript> blocks — Wikipedia hides the real <img> inside them
         for noscript in soup.find_all("noscript"):
@@ -58,16 +61,16 @@ async def scrape_images(page_url: str) -> List[Tuple[bytes, str, str]]:
             for tag in inner.find_all("img"):
                 src = tag.get("src")
                 if src:
-                    img_urls.add(urljoin(page_url, src))
+                    img_urls[urljoin(page_url, src)] = None
 
         for tag in soup.find_all("source"):
             srcset = tag.get("srcset", "")
             for part in srcset.split(","):
                 parts = part.strip().split()
                 if parts:
-                    img_urls.add(urljoin(page_url, parts[0]))
+                    img_urls[urljoin(page_url, parts[0])] = None
 
-        url_list = list(img_urls)[:MAX_IMAGES_PER_PAGE]
+        url_list = list(img_urls.keys())[:MAX_IMAGES_PER_PAGE]
 
         async def fetch_one(img_url: str) -> Optional[Tuple[bytes, str, str]]:
             path_lower = urlparse(img_url).path.lower().split("?")[0]

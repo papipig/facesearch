@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import List, Optional
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from insightface.app import FaceAnalysis
 
 from .config import CACHE_DIR, REFERENCE_DIR, UPLOADS_DIR
@@ -40,6 +41,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class _NoCacheAssets(BaseHTTPMiddleware):
+    """Force browsers to revalidate JS and CSS on every request."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+app.add_middleware(_NoCacheAssets)
 
 
 @app.get("/health")
